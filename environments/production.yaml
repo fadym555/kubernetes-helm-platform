@@ -1,0 +1,26 @@
+# Production: more headroom, HA by default, TLS on the ingress
+config:
+  message: "production"
+  logLevel: warn
+
+ingress:
+  host: webapp.example.com
+  tls:
+    enabled: true
+    secretName: webapp-tls
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  minAvailable: 2

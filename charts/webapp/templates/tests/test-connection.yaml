@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "webapp.fullname" . }}-test
+  labels:
+    {{ include "webapp.fullname" . }}-client: "true"
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: check
+      image: curlimages/curl:8.11.1
+      command:
+        - sh
+        - -c
+        - |
+          set -e
+          curl -fsS --retry 5 --retry-connrefused http://{{ include "webapp.fullname" . }}/readyz
+          curl -fsS http://{{ include "webapp.fullname" . }}/ | grep -q {{ .Values.config.message | quote }}
+          echo "service is ready and serving the configured message"
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 100m
+          memory: 32Mi

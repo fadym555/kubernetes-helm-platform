@@ -68,11 +68,13 @@ jobs:
       - name: Install chart with staging values
         run: helm upgrade --install webapp "$CHART" -f environments/staging.yaml -n staging --create-namespace --wait --timeout 5m
       - name: HPA scales to its minimum replicas
-        run: kubectl -n staging wait deploy/webapp --for=jsonpath='{.status.readyReplicas}'=2 --timeout=240s
+        run: |
+          kubectl -n staging wait deploy/webapp --for=jsonpath='{.status.readyReplicas}'=2 --timeout=240s
       - name: helm test
         run: helm test webapp -n staging --logs
       - name: Reachable through the ingress
-        run: curl -fsS -H "Host: staging.webapp.local" http://localhost/ | grep -q staging
+        run: |
+          curl -fsS -H "Host: staging.webapp.local" http://localhost/ | grep -q staging
       - name: Pods are spread across nodes
         run: kubectl -n staging get pods -o wide
       - name: Zero-downtime rolling update (no failed requests)

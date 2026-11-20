@@ -21,13 +21,3 @@ metadata:
   labels:
     {{- include "webapp.labels" . | nindent 4 }}
 automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "webapp.fullname" . }}
-  labels:
-    {{- include "webapp.labels" . | nindent 4 }}
-data:
-  PODINFO_LEVEL: {{ .Values.config.logLevel | quote }}
-  PODINFO_UI_MESSAGE: {{ .Values.config.message | quote }}

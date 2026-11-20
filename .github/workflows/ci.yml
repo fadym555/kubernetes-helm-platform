@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CHART: charts/webapp
+
+jobs:
+  lint:
+    name: Lint, render & policy scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+      - name: helm lint (every environment)
+        run: |
+          helm lint "$CHART" --strict
+          for env in staging production; do
+            helm lint "$CHART" -f "environments/$env.yaml" --strict
+          done
+      - name: Render manifests
+        run: |
+          mkdir -p rendered
+          for env in staging production; do
+            helm template webapp "$CHART" -f "environments/$env.yaml" --namespace "$env" > "rendered/$env.yaml"
+          done
+      - name: Validate against Kubernetes API schemas (kubeconform)
+        run: docker run --rm -v "$PWD/rendered:/r" ghcr.io/yannh/kubeconform:latest -strict -summary /r/staging.yaml /r/production.yaml
+      - name: Security policy scan (Trivy, fail on high/critical)
+        run: docker run --rm -v "$PWD/rendered:/r" aquasec/trivy:latest config --severity HIGH,CRITICAL --exit-code 1 /r
+      - name: Lint scripts (shellcheck)
+        run: docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:stable scripts/zero-downtime-check.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rendered-manifests
+          path: rendered/
+
+  deploy:
+    name: Deploy to 3-node cluster & verify
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: webapp
+          config: kind/cluster.yaml
+      - name: Install ingress-nginx and metrics-server
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0/deploy/static/provider/kind/deploy.yaml
+          helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+          helm upgrade --install metrics-server metrics-server/metrics-server -n kube-system --set "args={--kubelet-insecure-tls}" --wait
+          kubectl -n ingress-nginx wait --for=condition=complete job --all --timeout=180s
+          kubectl -n ingress-nginx wait --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=180s
+      - name: Install chart with staging values
+        run: helm upgrade --install webapp "$CHART" -f environments/staging.yaml -n staging --create-namespace --wait --timeout 5m
+      - name: HPA scales to its minimum replicas
+        run: kubectl -n staging wait deploy/webapp --for=jsonpath='{.status.readyReplicas}'=2 --timeout=240s
+      - name: helm test
+        run: helm test webapp -n staging --logs
+      - name: Reachable through the ingress
+        run: curl -fsS -H "Host: staging.webapp.local" http://localhost/ | grep -q staging
+      - name: Pods are spread across nodes
+        run: kubectl -n staging get pods -o wide
+      - name: Zero-downtime rolling update (no failed requests)
+        run: |
+          bash scripts/zero-downtime-check.sh http://localhost/ staging.webapp.local 75 &
+          probe=$!
+          sleep 5
+          helm upgrade webapp "$CHART" -f environments/staging.yaml -n staging --set image.tag=6.7.0 --wait --timeout 5m
+          wait "$probe"
+      - name: Rollback to the previous release
+        run: |
+          helm rollback webapp 1 -n staging --wait --timeout 5m
+          image=$(kubectl -n staging get deploy webapp -o jsonpath='{.spec.template.spec.containers[0].image}')
+          echo "running image after rollback: $image"
+          [[ "$image" == *:6.7.1 ]]
+          helm history webapp -n staging
+      - name: Final state
+        if: always()
+        run: kubectl -n staging get deploy,pods,svc,ingress,hpa,pdb,networkpolicy -o wide
+      - name: Debug on failure
+        if: failure()
+        run: |
+          kubectl get events -A --sort-by=.lastTimestamp | tail -n 50
+          kubectl -n staging describe pods

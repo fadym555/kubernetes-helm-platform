@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "webapp.fullname" . }}
+  labels:
+    {{- include "webapp.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "webapp.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "webapp.fullname" . }}
+  labels:
+    {{- include "webapp.labels" . | nindent 4 }}
+automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "webapp.fullname" . }}
+  labels:
+    {{- include "webapp.labels" . | nindent 4 }}
+data:
+  PODINFO_LEVEL: {{ .Values.config.logLevel | quote }}
+  PODINFO_UI_MESSAGE: {{ .Values.config.message | quote }}

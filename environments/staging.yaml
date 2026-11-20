@@ -1,0 +1,11 @@
+# Staging: smaller footprint, plain HTTP
+config:
+  message: "staging"
+  logLevel: debug
+
+ingress:
+  host: staging.webapp.local
+
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 4
